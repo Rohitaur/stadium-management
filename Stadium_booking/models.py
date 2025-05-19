@@ -25,7 +25,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=50, choices=(('owner', 'Owner'), ('user', 'User'), ('staff', 'Staff')))
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-
+    staff_details = models.JSONField(default=dict, blank=True, null=True)
     objects = CustomUserManager()
 
     USERNAME_FIELD = 'email'
@@ -42,6 +42,7 @@ class Add_Stadium(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE
     )
+    sId = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100, unique=True)
     area = models.CharField(max_length=150)
     city = models.CharField(max_length=100)
@@ -53,6 +54,7 @@ class Add_Stadium(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     update_at = models.DateTimeField(auto_now=True)
     is_available = models.BooleanField(default=True)
+    event_types = models.JSONField(default=dict, blank=True, null=False)
 
     
     class Meta:
@@ -65,3 +67,18 @@ class Add_Stadium(models.Model):
      
     def __str__(self):
         return self.name
+
+# Stadium Booking
+class StadiumBooking(models.Model):
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('cancelled', 'Cancelled'),
+    )
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='bookings')
+    stadium = models.ForeignKey(Add_Stadium, on_delete=models.CASCADE, related_name='bookings')
+    event_name = models.CharField(max_length=100)
+    event_date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

@@ -1,16 +1,25 @@
-
 from rest_framework import serializers
 from .models import CustomUser
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import Add_Stadium
+from .models import Add_Stadium, StadiumBooking
+
 
 class CustomUserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 
     class Meta:
         model = CustomUser
-        fields = ['email', 'name', 'phone', 'role', 'password']
+        fields = ['email', 'name', 'phone', 'role', 'password','staff_details']
+    def validate(self, attrs):
+        role = attrs.get('role')
+        staff_details = attrs.get('staff_details')
+        if role == 'staff' and not staff_details:
+            raise serializers.ValidationError({"staff_details": "This field is required for staff."})
+        if self.instance is None:  # Only validate if creating a new user
+            if role == 'owner' and not staff_details:
+                raise serializers.ValidationError({"staff_details": "This field is required for owners."})
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop('password')
@@ -50,3 +59,10 @@ class StadiumSerializer(serializers.ModelSerializer):
     class Meta:
         model = Add_Stadium
         fields = '__all__'
+
+# stadium_booking_serializer
+class StadiumBookingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StadiumBooking
+        fields = '__all__'
+        read_only_fields = ['user', 'status', 'created_at', 'updated_at']
