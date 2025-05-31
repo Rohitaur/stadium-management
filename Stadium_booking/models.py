@@ -2,6 +2,9 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.conf import settings
+from datetime import date
+
+
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -81,6 +84,8 @@ class StadiumBooking(models.Model):
     stadium = models.ForeignKey(Add_Stadium, on_delete=models.CASCADE, related_name='bookings')
     event_name = models.CharField(max_length=100)
     event_date = models.DateField()
+    end_date = models.DateField(default=date.today)
+    extra_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

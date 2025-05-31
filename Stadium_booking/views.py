@@ -13,6 +13,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.permissions import AllowAny
 from .models import CustomUser, StadiumBooking
 from django.db import models
+from datetime import datetime, timedelta,date
 # ------------------- USER REGISTRATION -------------------
 class UserRegistrationView(APIView):
     permission_classes = [permissions.AllowAny] 
@@ -310,6 +311,8 @@ class FilterStadiumsView(APIView):
     
 
 # ..............book-stadium.....................
+
+
 class BookStadiumView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -321,9 +324,31 @@ class BookStadiumView(APIView):
 
         stadium_id = request.data.get('stadium')
         event_date = request.data.get('event_date')
+        end_date = request.data.get('end_date')  # New: user must provide end_date
+             
+
+        
+        if event_date is None or end_date is None:
+            return Response({
+                "message": "Both event_date and end_date are required.",
+                "key": "error",
+                "status": False,
+                "data": {}
+            }, status=status.HTTP_400_BAD_REQUEST)        
 
 
-         # Get stadium and prices
+        # Yeh block yahan likhein:
+        if isinstance(event_date, date):
+            start = event_date
+        else:
+            start = datetime.strptime(str(event_date), "%Y-%m-%d").date()
+
+        if isinstance(end_date, date):
+            end = end_date
+        else:
+            end = datetime.strptime(str(end_date), "%Y-%m-%d").date()
+
+        # Get stadium and prices
         try:
             stadium = Add_Stadium.objects.get(pk=stadium_id)
         except Add_Stadium.DoesNotExist:
@@ -333,43 +358,64 @@ class BookStadiumView(APIView):
         gst_percent = float(stadium.gst_percent)
         service_percent = float(stadium.service_percent)
 
-        gst_amount = owner_price * gst_percent / 100
-        service_amount = owner_price * service_percent / 100
-        total_price = owner_price + gst_amount + service_amount
+        # Calculate number of days
+        num_days = (end - start).days + 1
+        if num_days < 1:
+            return Response({"message": "End date must be after start date.", "key": "error", "status": False, "data": {}}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for existing booking for this stadium and date with pending/approved status
-        existing_booking = StadiumBooking.objects.filter(
+        # Calculate base price for all days
+        base_price = owner_price * num_days
+        gst_amount = base_price * gst_percent / 100
+        service_amount = base_price * service_percent / 100
+        total_price = base_price + gst_amount + service_amount
+
+        # Check for overdue (if booking end_date < today, apply fine)
+        today = datetime.now().date()
+        extra_charges = 0
+        fine_per_day = owner_price * 0.5  # Example: 50% of daily price as fine
+        if end < today:
+            overdue_days = (today - end).days
+            extra_charges = fine_per_day * overdue_days
+            total_price += extra_charges
+
+        # Check for existing booking overlap
+        overlap = StadiumBooking.objects.filter(
             stadium_id=stadium_id,
-            event_date=event_date,
-            status__in=['pending', 'approved']
-        ).first()
-
-        if existing_booking:
+            status__in=['pending', 'approved'],
+            event_date__lte=end,
+            end_date__gte=start
+        ).exists()
+        if overlap:
             return Response({
-                "message": f"The stadium is already booked on {existing_booking.event_date}. You can book it for another date after this.",
+                "message": "The stadium is already booked for these dates.",
                 "key": "error",
-                "status": status.HTTP_400_BAD_REQUEST,
-                "data": {
-                    "booked_date": str(existing_booking.event_date)
-                }
+                "status": False,
+                "data": {}
             }, status=status.HTTP_400_BAD_REQUEST)
 
         if serializer.is_valid():
-            serializer.save(user=request.user, status='approved')
+            serializer.save(
+                user=request.user,
+                status='approved',
+                extra_charges=extra_charges
+            )
             return Response({
                 "message": "Stadium booked Successfully.",
                 "key": "success",
                 "status": status.HTTP_201_CREATED,
                 "data": {
-                **serializer.data,
-                "price_breakdown": {
-                    "owner_price": owner_price,
-                    "gst_percent": f"{int(gst_percent)}%",
-                    "gst_amount": gst_amount,
-                    "service_percent": f"{int(service_percent)}%",
-                    "service_amount": service_amount,
-                    "total_price": total_price
-}
+                    **serializer.data,
+                    "price_breakdown": {
+                        "base_price": base_price,
+                        "days": num_days,
+                        "owner_price_per_day": owner_price,
+                        "gst_percent": f"{int(gst_percent)}%",
+                        "gst_amount": gst_amount,
+                        "service_percent": f"{int(service_percent)}%",
+                        "service_amount": service_amount,
+                        "extra_charges": extra_charges,
+                        "total_price": total_price
+                    }
                 }
             }, status=status.HTTP_201_CREATED)
         # Collect error messages from serializer.errors
@@ -381,9 +427,12 @@ class BookStadiumView(APIView):
         return Response({
             "message": error_message,
             "key": "error",
-            "status": status.HTTP_400_BAD_REQUEST,
+            "status": False,
             "data": {}
         }, status=status.HTTP_400_BAD_REQUEST)
+    
+    
+    
     
 # ..............manage-booking-details.....................
 class ManageBookingView(APIView):
