@@ -14,11 +14,11 @@ class CustomUserRegistrationSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         role = attrs.get('role')
         staff_details = attrs.get('staff_details')
-        if role == 'staff' and not staff_details:
+        # Only staff can add staff_details
+        if role in ['staff'] and not staff_details:
             raise serializers.ValidationError({"staff_details": "This field is required for staff."})
-        if self.instance is None:  # Only validate if creating a new user
-            if role == 'owner' and not staff_details:
-                raise serializers.ValidationError({"staff_details": "This field is required for owners."})
+        if role == 'user' and staff_details:
+            raise serializers.ValidationError({"staff_details": "User cannot add staff_details."})
         return attrs
 
     def create(self, validated_data):

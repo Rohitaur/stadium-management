@@ -15,14 +15,37 @@ from .models import CustomUser, StadiumBooking
 from django.db import models
 # ------------------- USER REGISTRATION -------------------
 class UserRegistrationView(APIView):
-    permission_classes = [permissions.AllowAny]  # ✅ Anyone can register
+    permission_classes = [permissions.AllowAny] 
 
     def post(self, request):
         serializer = CustomUserRegistrationSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "User registered successfully!"}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            user = serializer.save()
+            return Response({
+                "message": "Registration successful",
+                "key": "success",
+                "status": status.HTTP_201_CREATED,
+                "data": {
+                    "email": user.email,
+                    "name": user.name,
+                    "role": user.role,
+                    "phone": user.phone,
+                }
+            }, status=status.HTTP_201_CREATED)
+        else:
+            # Get first error message from serializer.errors
+            error_messages = []
+            for field, errors in serializer.errors.items():
+                for error in errors:
+                    error_messages.append(f"{field}: {error}")
+            error_message = " | ".join(error_messages) if error_messages else "Registration failed"
+            return Response({
+                "message": error_message,
+                "key": "error",
+                "status": status.HTTP_400_BAD_REQUEST,
+                "data": {}
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
 
 
 # ------------------- USER LOGIN -------------------
@@ -43,13 +66,28 @@ class LoginAPIView(APIView):
                 "name": user.name 
             }
             return Response({
-                "message": "Login sucessful",
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'user': user_data
-            })
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+                "message": "Login successful",
+                "key": "success",
+                "status": status.HTTP_200_OK,
+                "data": {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                    "user": user_data
+                }
+            }, status=status.HTTP_200_OK)
+        else:
+            # Collect error messages from serializer.errors
+            error_messages = []
+            for field, errors in serializer.errors.items():
+                for error in errors:
+                    error_messages.append(f"{field}: {error}")
+            error_message = " | ".join(error_messages) if error_messages else "Login failed"
+            return Response({
+                "message": error_message,
+                "key": "error",
+                "status": status.HTTP_400_BAD_REQUEST,
+                "data": {}
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 class CustomLoginView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
@@ -59,7 +97,7 @@ class CustomLoginView(TokenObtainPairView):
 class AddStadiumView(APIView):
 
     authentication_classes= [JWTAuthentication]
-    permission_classes = [permissions.IsAuthenticated]  # ✅ Only logged-in users allowed
+    permission_classes = [permissions.IsAuthenticated]  # Only logged-in users allowed
 
     def post(self, request):
         data = request.data.copy()
@@ -67,11 +105,46 @@ class AddStadiumView(APIView):
         if getattr(request.user, 'role', None) != 'owner':
             raise PermissionDenied("Only owners can add a stadium.")
         data['owner'] = request.user.id  # stadium owner = current user
+
+         # Check for duplicate stadium (same name and address for this owner)
+        exists = Add_Stadium.objects.filter(
+            owner=request.user,
+            name=data.get('name'),
+            area=data.get('area'),
+            city=data.get('city'),
+            state=data.get('state'),
+            pincode=data.get('pincode')
+        ).exists()
+        if exists:
+            return Response({
+                "message": "A stadium with the same name and address already exists.",
+                "key": "error",
+                "status": status.HTTP_400_BAD_REQUEST,
+                "data": {}
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
         serializer = StadiumSerializer(data=data)
         if serializer.is_valid():
             serializer.save()
-            return Response({"message": "Stadium added successfully", "data": serializer.data}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                "message": "Stadium added successfully",
+                "key": "success",
+                "status": status.HTTP_201_CREATED,
+                "data": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        # Collect error messages from serializer.errors
+        error_messages = []
+        for field, errors in serializer.errors.items():
+            for error in errors:
+                error_messages.append(f"{field}: {error}")
+        error_message = " | ".join(error_messages) if error_messages else "Stadium creation failed"
+        return Response({
+            "message": error_message,
+            "key": "error",
+            "status": status.HTTP_400_BAD_REQUEST,
+            "data": {}
+        }, status=status.HTTP_400_BAD_REQUEST)
     
 # ..............get-stadium-by-Id.....................
 
@@ -220,20 +293,17 @@ class FilterStadiumsView(APIView):
                 models.Q(area__icontains=location)
             )
 
-        # Filter by event name and price in event_types JSONField
+        # Filter by price (new attribute)
+        if max_price is not None:
+            try:
+                max_price = float(max_price)
+                stadiums = stadiums.filter(price__lte=max_price)
+            except ValueError:
+                return Response({"message": "Invalid max_price value.", "key": "error", "status": status.HTTP_400_BAD_REQUEST, "data": {}}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Filter by event name in event_types JSONField
         if event_name:
             stadiums = [stadium for stadium in stadiums if event_name in (stadium.event_types or {})]
-            if max_price is not None:
-                stadiums = [
-                    stadium for stadium in stadiums
-                    if event_name in (stadium.event_types or {}) and stadium.event_types[event_name] <= float(max_price)
-                ]
-        elif max_price is not None:
-            # If only price is provided, filter stadiums where any event price is <= max_price
-            stadiums = [
-                stadium for stadium in stadiums
-                if any(price <= float(max_price) for price in (stadium.event_types or {}).values())
-            ]
 
         serializer = StadiumSerializer(stadiums, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -248,10 +318,72 @@ class BookStadiumView(APIView):
         serializer = StadiumBookingSerializer(data=request.data)
         if request.user.role == 'owner':
             raise PermissionDenied("Stadium owners cannot book their own stadiums.")
+
+        stadium_id = request.data.get('stadium')
+        event_date = request.data.get('event_date')
+
+
+         # Get stadium and prices
+        try:
+            stadium = Add_Stadium.objects.get(pk=stadium_id)
+        except Add_Stadium.DoesNotExist:
+            return Response({"message": "Stadium not found.", "key": "error", "status": False, "data": {}}, status=status.HTTP_404_NOT_FOUND)
+
+        owner_price = float(stadium.price)
+        gst_percent = float(stadium.gst_percent)
+        service_percent = float(stadium.service_percent)
+
+        gst_amount = owner_price * gst_percent / 100
+        service_amount = owner_price * service_percent / 100
+        total_price = owner_price + gst_amount + service_amount
+
+        # Check for existing booking for this stadium and date with pending/approved status
+        existing_booking = StadiumBooking.objects.filter(
+            stadium_id=stadium_id,
+            event_date=event_date,
+            status__in=['pending', 'approved']
+        ).first()
+
+        if existing_booking:
+            return Response({
+                "message": f"The stadium is already booked on {existing_booking.event_date}. You can book it for another date after this.",
+                "key": "error",
+                "status": status.HTTP_400_BAD_REQUEST,
+                "data": {
+                    "booked_date": str(existing_booking.event_date)
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if serializer.is_valid():
-            serializer.save(user=request.user, status='pending')
-            return Response({"message": "Booking request sent to owner.", "data": serializer.data}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save(user=request.user, status='approved')
+            return Response({
+                "message": "Stadium booked Successfully.",
+                "key": "success",
+                "status": status.HTTP_201_CREATED,
+                "data": {
+                **serializer.data,
+                "price_breakdown": {
+                    "owner_price": owner_price,
+                    "gst_percent": f"{int(gst_percent)}%",
+                    "gst_amount": gst_amount,
+                    "service_percent": f"{int(service_percent)}%",
+                    "service_amount": service_amount,
+                    "total_price": total_price
+}
+                }
+            }, status=status.HTTP_201_CREATED)
+        # Collect error messages from serializer.errors
+        error_messages = []
+        for field, errors in serializer.errors.items():
+            for error in errors:
+                error_messages.append(f"{field}: {error}")
+        error_message = " | ".join(error_messages) if error_messages else "Booking failed"
+        return Response({
+            "message": error_message,
+            "key": "error",
+            "status": status.HTTP_400_BAD_REQUEST,
+            "data": {}
+        }, status=status.HTTP_400_BAD_REQUEST)
     
 # ..............manage-booking-details.....................
 class ManageBookingView(APIView):

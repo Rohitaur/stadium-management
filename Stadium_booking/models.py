@@ -55,7 +55,9 @@ class Add_Stadium(models.Model):
     update_at = models.DateTimeField(auto_now=True)
     is_available = models.BooleanField(default=True)
     event_types = models.JSONField(default=dict, blank=True, null=False)
-
+    price = models.DecimalField(max_digits=10, decimal_places=2) 
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=18)  # GST percent
+    service_percent = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     
     class Meta:
         permissions = [
